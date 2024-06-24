@@ -17,7 +17,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import type { TestConfig } from './playwrightTestTypes';
 import { SettingsModel } from './settingsModel';
-import { escapeAttribute, findNode, getNonce } from './utils';
+import { findNode } from './utils';
 import * as vscodeTypes from './vscodeTypes';
 import { DisposableBase } from './disposableBase';
 
@@ -90,62 +90,53 @@ class TraceViewerView extends DisposableBase {
   }
 
   public show(url?: string) {
-    this._webviewPanel.webview.html = this.getHtml(url);
+    this._webviewPanel.webview.html = url ? this.getHtml(url) : this.getLoadingHtml();
     this._webviewPanel.reveal(undefined, true);
   }
 
-  private getHtml(url?: string) {
-    const nonce = getNonce();
+  private getLoadingHtml() {
     const cspSource = this._webviewPanel.webview.cspSource;
-    const theme = getThemeMode(this._vscode);
-    const origin = url ? new URL(url).origin : undefined;
 
-    return /* html */ `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta
-          http-equiv="Content-Security-Policy"
-          content="default-src 'none'; img-src data: ${cspSource}; media-src ${cspSource}; script-src 'nonce-${nonce}'; style-src ${cspSource}; frame-src ${url ?? ''} ${cspSource} https:">
-        <!-- Disable pinch zooming -->
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
-        <title>Playwright Trace Viewer</title>
-        <link rel="stylesheet" href="${escapeAttribute(this.extensionResource('media', 'traceViewer.css'))}" type="text/css" media="screen">
-      </head>
-      <body data-vscode-context='{ "preventDefaultContextMenuItems": true }'>
-        <div class="${url ? 'hidden' : 'loading'}">
-          <div class="loading-indicator"></div>
-        </div>
-        <iframe class="${url ? '' : 'hidden'}" id="traceviewer" src="${url ?? ''}"></iframe>
-        <script nonce="${nonce}">
-          const vscode = acquireVsCodeApi();
-          const iframe = document.getElementById('traceviewer');
-          function postMessageToVSCode(data) {
-            vscode.postMessage(data);
-          }
-          function postMessageToFrame(data) {
-            iframe.contentWindow.postMessage(data, '*');
-          }
-          iframe.addEventListener('load', () => postMessageToFrame({ theme: '${theme}' }));
-          window.addEventListener('message', ({ data, origin }) => {
-            if (origin === '${origin}') {
-              // propagate key events to vscode
-              if (data.type === 'keyup' || data.type === 'keydown') {
-                const emulatedKeyboardEvent = new KeyboardEvent(data.type, data);
-                Object.defineProperty(emulatedKeyboardEvent, 'target', {
-                  get: () => window,
-                });
-                window.dispatchEvent(emulatedKeyboardEvent);
-              } else {
-                postMessageToVSCode(data);
-              }
-            } else {
-              postMessageToFrame(data);
-            }
-          });
-        </script>
-      </body>
-			</html>`;
+    return /* html */ `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src ${cspSource} data:">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playwright Trace Viewer</title>
+    <link rel="stylesheet" href="${this.extensionResource('media', 'traceViewer.css')}" type="text/css" media="screen">
+  </head>
+  <body data-vscode-context='{ "preventDefaultContextMenuItems": true }'>
+    <div class="loading-indicator"></div>
+  </body>
+</html>`;
+  }
+
+  private getHtml(url: string) {
+    const cspSource = this._webviewPanel.webview.cspSource;
+
+    return /* html */ `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <base href="${url}/trace/" />
+    <meta http-equiv="Content-Security-Policy" content="default-src ${cspSource} ${url} data:">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="./playwright-logo.svg" type="image/svg+xml">
+    <title>Playwright Trace Viewer</title>
+    <script type="module" crossorigin src="./embedded.js"></script>
+    <link rel="stylesheet" crossorigin href="./embedded.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>`;
+  }
+
+  postMessage(msg: any) {
+    this._webviewPanel.webview.postMessage(msg);
   }
 
   private _register<T extends vscodeTypes.Disposable>(value: T): T {
@@ -205,8 +196,8 @@ export class TraceViewer implements vscodeTypes.Disposable {
       return;
     await this._startIfNeeded(config);
     this._currentFile = file;
-    this._traceViewerProcess?.stdin?.write(getPath(file) + '\n');
     this._maybeOpenEmbeddedTraceViewer(config);
+    this._traceViewerView?.postMessage({ method: 'loadTraceRequested', params: { traceUrl: getPath(file) } });
   }
 
   dispose() {
@@ -220,14 +211,17 @@ export class TraceViewer implements vscodeTypes.Disposable {
     const node = await findNode(this._vscode, config.workspaceFolder);
     if (this._traceViewerProcess)
       return;
-    const allArgs = [config.cli, 'show-trace', `--stdin`];
+    const allArgs = [config.cli, 'show-trace'];
     const embedded = this._settingsModel.embedTraceViewer.get() && this._checkEmbeddedVersion(config);
     if (embedded) {
       allArgs.push('--server-only');
       this._maybeOpenEmbeddedTraceViewer(config);
-    } else if (this._vscode.env.remoteName) {
-      allArgs.push('--host', '0.0.0.0');
-      allArgs.push('--port', '0');
+    } else {
+      allArgs.push(`--stdin`);
+      if (this._vscode.env.remoteName) {
+        allArgs.push('--host', '0.0.0.0');
+        allArgs.push('--port', '0');
+      }
     }
 
     const traceViewerProcess = spawn(node, allArgs, {
@@ -248,7 +242,7 @@ export class TraceViewer implements vscodeTypes.Disposable {
         if (!url) return;
         const uri = await this._vscode.env.asExternalUri(this._vscode.Uri.parse(url));
         this._traceViewerUrl = uri.toString();
-        this._traceViewerView?.show(this._traceViewerUrl);
+        this._traceViewerView?.show(url);
       }
       console.log(data.toString());
     });

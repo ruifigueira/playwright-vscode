@@ -75,7 +75,7 @@ test('should show tracer when test runs', async ({ activate }) => {
   const [webview] = await vscode.webViewsByPanelType('playwright.traceviewer.view')!;
 
   testItems[0].selected();
-  const listItem = webview.frameLocator('iframe').getByTestId('actions-tree').getByRole('listitem');
+  const listItem = webview.getByTestId('actions-tree').getByRole('listitem');
   await expect(
       listItem,
       'action list'
@@ -107,10 +107,10 @@ test('should switch trace when selected test item changes', async ({ activate })
   const [webview] = await vscode.webViewsByPanelType('playwright.traceviewer.view')!;
 
   testItems[0].selected();
-  await expect(webview.frameLocator('iframe').frameLocator('iframe.snapshot-visible').locator('h1')).toHaveText('Test 1');
+  await expect(webview.frameLocator('iframe.snapshot-visible').locator('h1')).toHaveText('Test 1');
 
   testItems[1].selected();
-  await expect(webview.frameLocator('iframe').frameLocator('iframe.snapshot-visible').locator('h1')).toHaveText('Test 2');
+  await expect(webview.frameLocator('iframe.snapshot-visible').locator('h1')).toHaveText('Test 2');
 });
 
 test('should toggle between dark and light themes', async ({ activate }) => {
@@ -133,13 +133,13 @@ test('should toggle between dark and light themes', async ({ activate }) => {
 
   testItems[0].selected();
 
-  await expect(webview.frameLocator('iframe').locator('body')).toHaveClass('dark-mode');
+  await expect(webview.locator('body')).toHaveClass('dark-mode');
 
   await configuration.update('colorTheme', 'Light Modern',true);
-  await expect(webview.frameLocator('iframe').locator('body')).toHaveClass('light-mode');
+  await expect(webview.locator('body')).toHaveClass('light-mode');
 
   await configuration.update('colorTheme', 'Dark Modern', true);
-  await expect(webview.frameLocator('iframe').locator('body')).toHaveClass('dark-mode');
+  await expect(webview.locator('body')).toHaveClass('dark-mode');
 });
 
 test('should reopen trace viewer if closed', async ({ activate }) => {
@@ -187,7 +187,7 @@ test('should open snapshot popout', async ({ activate }) => {
   testItems[0].selected();
 
   const [webview] = await vscode.webViewsByPanelType('playwright.traceviewer.view')!;
-  await webview.frameLocator('iframe').getByTitle('Open snapshot in a new tab').click();
+  await webview.getByTitle('Open snapshot in a new tab').click();
 
   await expect.poll(() => vscode.openExternalUrls).toHaveLength(1);
   expect(vscode.openExternalUrls[0]).toContain('snapshot.html');
